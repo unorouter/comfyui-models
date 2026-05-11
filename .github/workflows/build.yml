@@ -1,4 +1,4 @@
-name: Build baked-models image
+name: Build baked-models image (self-hosted)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 concurrency:
-  group: comfyui-models-${{ github.ref }}-${{ github.event_name }}
+  group: build-self-hosted-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -15,14 +15,20 @@ permissions:
 
 jobs:
   build:
-    # Bake takes ~30-45 min and produces a 80-100 GB image. GitHub-hosted
-    # runners only have 14 GB disk so we need a self-hosted runner.
+    # Self-hosted runner on don server (701 GB disk). GitHub-hosted runners
+    # only have 14 GB which is too small for the 34 GB Flux 2 unet layer.
     runs-on: self-hosted
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -31,17 +37,22 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build & push
+      - name: Build & push (Docker Hub + ghcr.io)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
+          provenance: false
+          # Push to both registries so RunPod can pull from the faster one
+          # (Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1).
           tags: |
+            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest
+            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/comfyui-models:latest
             ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}
           secrets: |
-            hf_token=${{ secrets.HF_TOKEN }}
+            "hf_token=${{ secrets.HF_TOKEN }}"
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max
 
@@ -50,12 +61,12 @@ jobs:
           {
             echo "### ComfyUI baked-models image"
             echo '```'
-            echo "ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
-            echo "ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}"
+            echo "Docker Hub: docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
+            echo "ghcr.io:    ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
             echo '```'
             echo ""
-            echo "Pull on RunPod template:"
+            echo "Update RunPod template:"
             echo '```'
-            echo "runpodctl template update gcgakg920o --image ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
+            echo "runpodctl template update gcgakg920o --image docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
