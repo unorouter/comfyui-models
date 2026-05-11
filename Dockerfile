@@ -1,0 +1,97 @@
+# Models baked into the worker image so RunPod workers can spawn in any
+# datacenter without a network volume. Built on top of the studio-redesign
+# runtime image (ComfyUI + Impact Pack + ControlNet aux + LayerDiffuse +
+# Inspire Pack + smZNodes pre-installed).
+#
+# Image size with everything baked: ~95-110 GB. Cold-host pulls take 5-15
+# minutes; subsequent pulls hit the Docker layer cache on the same machine.
+# Trade-off: long cold start but no DC lock-in -> workers spawn in any
+# region with GPU capacity.
+#
+# Edge case (see comfyui-runpod-memory.md): worker-comfyui's
+# extra_model_paths.yaml only scans `unet/` and `clip/`, NOT
+# `diffusion_models/` and `text_encoders/`. Flux 2 weights MUST land in
+# unet/ and clip/ respectively or ComfyUI returns value_not_in_list.
+
+FROM 0don/worker-comfyui:studio-redesign-base
+
+ENV HF_HUB_ENABLE_HF_TRANSFER=1
+RUN pip install --no-cache-dir -U "huggingface_hub[hf_transfer]"
+
+# ---- SDXL fine-tunes (~20 GB) ----
+# HF_TOKEN bypasses anonymous rate limits on multi-GB downloads.
+RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
+    hf download Romanos575/prefectPonyXL_v4 prefectPonyXL_v40.safetensors \
+        --local-dir /comfyui/models/checkpoints/ \
+    && hf download fandyy24/lustifySDXLNSFW_endgame lustifySDXLNSFW_endgame.safetensors \
+        --local-dir /comfyui/models/checkpoints/ \
+    && hf download stabilityai/stable-diffusion-xl-base-1.0 sd_xl_base_1.0.safetensors \
+        --local-dir /comfyui/models/checkpoints/
+
+# ---- Flux 2 dev bundle (~52 GB) ----
+# Files live under split_files/<type>/ in the source repo. Move to the
+# scan paths worker-comfyui's extra_model_paths.yaml looks at.
+RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
+    hf download Comfy-Org/flux2-dev split_files/diffusion_models/flux2_dev_fp8mixed.safetensors \
+        --local-dir /tmp/hf-flux2 \
+    && mv /tmp/hf-flux2/split_files/diffusion_models/flux2_dev_fp8mixed.safetensors /comfyui/models/unet/ \
+    && hf download Comfy-Org/flux2-dev split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors \
+        --local-dir /tmp/hf-flux2 \
+    && mv /tmp/hf-flux2/split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors /comfyui/models/clip/ \
+    && hf download Comfy-Org/flux2-dev split_files/vae/flux2-vae.safetensors \
+        --local-dir /tmp/hf-flux2 \
+    && mv /tmp/hf-flux2/split_files/vae/flux2-vae.safetensors /comfyui/models/vae/ \
+    && rm -rf /tmp/hf-flux2
+
+# ---- LoRAs (~1.2 GB) ----
+# Matches LORA_SEEDS in unorouter src/lib/db/seeds.ts.
+RUN mkdir -p /comfyui/models/loras \
+    && cd /comfyui/models/loras \
+    && hf download Naznut/Pony_LORAs Sinfully_Stylish_dramitic_bold_lighting.safetensors --local-dir . \
+    && hf download Naznut/Pony_LORAs sinfully_stylish_PONY_0.2.safetensors --local-dir . \
+    && hf download Naznut/Pony_LORAs Expressive_H-000001.safetensors --local-dir . \
+    && hf download SirVeggie/wlop-pony-lora wlop-000018-pony.safetensors --local-dir . \
+    && hf download Naznut/Pony_LORAs jinx.safetensors --local-dir .
+
+# ---- Embeddings (~70 KB) ----
+RUN mkdir -p /comfyui/models/embeddings \
+    && hf download embed/EasyNegative EasyNegative.safetensors --local-dir /comfyui/models/embeddings/
+
+# ---- ESRGAN upscalers (~250 MB) ----
+RUN mkdir -p /comfyui/models/upscale_models \
+    && cd /comfyui/models/upscale_models \
+    && wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth -O RealESRGAN_x4plus.pth \
+    && wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth -O RealESR_AnimeVideoV3.pth \
+    && wget -q https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Siax_200k.pth -O 4x_NMKD-Siax_200k.pth \
+    && wget -q https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth -O 4x-UltraSharp.pth
+
+# ---- SDXL ControlNets (xinsir, ~7 GB) ----
+RUN mkdir -p /comfyui/models/controlnet \
+    && cd /comfyui/models/controlnet \
+    && hf download xinsir/controlnet-depth-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/cn-depth \
+    && mv /tmp/cn-depth/diffusion_pytorch_model.safetensors control-depth-sdxl.safetensors \
+    && hf download xinsir/controlnet-canny-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/cn-canny \
+    && mv /tmp/cn-canny/diffusion_pytorch_model.safetensors control-canny-sdxl.safetensors \
+    && hf download xinsir/controlnet-openpose-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/cn-openpose \
+    && mv /tmp/cn-openpose/diffusion_pytorch_model.safetensors control-openpose-sdxl.safetensors \
+    && rm -rf /tmp/cn-*
+
+# ---- ADetailer dependencies (YOLO + SAM, ~430 MB) ----
+RUN mkdir -p /comfyui/models/ultralytics/bbox /comfyui/models/sams \
+    && wget -q https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt \
+        -O /comfyui/models/ultralytics/bbox/face_yolov8s.pt \
+    && wget -q https://huggingface.co/Bingsu/adetailer/resolve/main/hand_yolov9c.pt \
+        -O /comfyui/models/ultralytics/bbox/hand_yolov9c.pt \
+    && wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
+        -O /comfyui/models/sams/sam_vit_b_01ec64.pth
+
+# ---- LayerDiffuse SDXL (~700 MB) ----
+RUN mkdir -p /comfyui/models/diffusion_models \
+    && hf download LayerDiffusion/layerdiffusion-v1 layer_xl_transparent_attn.safetensors \
+        --local-dir /comfyui/models/diffusion_models/
+
+# Verify everything landed where ComfyUI's extra_model_paths.yaml expects.
+RUN ls -lh /comfyui/models/checkpoints/ /comfyui/models/loras/ /comfyui/models/embeddings/ \
+    /comfyui/models/upscale_models/ /comfyui/models/controlnet/ /comfyui/models/ultralytics/bbox/ \
+    /comfyui/models/sams/ /comfyui/models/diffusion_models/ /comfyui/models/unet/ \
+    /comfyui/models/clip/ /comfyui/models/vae/

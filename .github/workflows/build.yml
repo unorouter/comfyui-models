@@ -1,0 +1,61 @@
+name: Build baked-models image
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: comfyui-models-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    # Bake takes ~30-45 min and produces a 80-100 GB image. GitHub-hosted
+    # runners only have 14 GB disk so we need a self-hosted runner.
+    runs-on: self-hosted
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/comfyui-models:latest
+            ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}
+          secrets: |
+            hf_token=${{ secrets.HF_TOKEN }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max
+
+      - name: Image summary
+        run: |
+          {
+            echo "### ComfyUI baked-models image"
+            echo '```'
+            echo "ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
+            echo "ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}"
+            echo '```'
+            echo ""
+            echo "Pull on RunPod template:"
+            echo '```'
+            echo "runpodctl template update gcgakg920o --image ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
