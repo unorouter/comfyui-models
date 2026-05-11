@@ -26,8 +26,11 @@
 # download stages so they don't each repeat the pip install.
 # ============================================================
 FROM 0don/worker-comfyui:studio-redesign-base AS dl-base
-ENV HF_XET_HIGH_PERFORMANCE=1 \
-    HF_XET_NUM_CONCURRENT_RANGE_GETS=16
+# Conservative concurrency: 7 parallel stages already saturate the
+# runner's NIC. HF_XET_HIGH_PERFORMANCE + range=16 on top crushed don
+# server's 31GB RAM. Default range_gets (4) is enough alongside stage
+# parallelism.
+ENV HF_XET_NUM_CONCURRENT_RANGE_GETS=4
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --no-cache-dir -U "huggingface_hub[hf_xet]"
 
