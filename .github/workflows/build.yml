@@ -42,7 +42,6 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          push: true
           provenance: false
           # Push to both registries so RunPod can pull from the faster one
           # (Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1).
@@ -53,8 +52,20 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}
           secrets: |
             "hf_token=${{ secrets.HF_TOKEN }}"
+          # zstd over gzip for the image layers:
+          # - 20-50% smaller layers (better push throughput)
+          # - Decompression ~60% faster than gzip on pull = RunPod cold
+          #   start drops ~30% (per AWS Fargate benchmark)
+          # - safetensors themselves barely compress with either algorithm;
+          #   the real win is non-tensor layers (Python deps, ComfyUI src,
+          #   base image)
+          # - force-compression=true recompresses the gzip base-image
+          #   layers to zstd so the final image is uniform
+          # - BuildKit's zstd is pure-Go klauspost (not CGO), so build
+          #   compression speed is marginal vs gzip; the win is push/pull
+          outputs: type=image,push=true,compression=zstd,force-compression=true
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=min,compression=zstd,force-compression=true
 
       - name: Image summary
         run: |
