@@ -76,12 +76,21 @@ RUN mkdir -p /comfyui/models/controlnet \
     && mv /tmp/cn-openpose/diffusion_pytorch_model.safetensors control-openpose-sdxl.safetensors \
     && rm -rf /tmp/cn-*
 
-# ---- ADetailer dependencies (YOLO + SAM, ~430 MB) ----
-RUN mkdir -p /comfyui/models/ultralytics/bbox /comfyui/models/sams \
-    && wget -q https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov8s.pt \
-        -O /comfyui/models/ultralytics/bbox/face_yolov8s.pt \
-    && wget -q https://huggingface.co/Bingsu/adetailer/resolve/main/hand_yolov9c.pt \
-        -O /comfyui/models/ultralytics/bbox/hand_yolov9c.pt \
+# ---- ADetailer dependencies (YOLO + SAM, ~800 MB) ----
+# Full set matching the UI's YOLO_MODELS dropdown in
+# unorouter/src/components/pages/sidebar/generate/fields/adetailer-section.tsx.
+# mediapipe_face_* are NOT files — Impact Pack maps those names to its
+# bundled mediapipe library internally.
+RUN mkdir -p /comfyui/models/ultralytics/bbox /comfyui/models/ultralytics/segm /comfyui/models/sams \
+    && cd /comfyui/models/ultralytics/bbox \
+    && for f in face_yolov8s.pt face_yolov9c.pt face_yolov8m.pt face_yolov8n.pt face_yolov8n_v2.pt \
+                hand_yolov8s.pt hand_yolov9c.pt hand_yolov8n.pt; do \
+         wget -q "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" -O "$f"; \
+       done \
+    && cd /comfyui/models/ultralytics/segm \
+    && for f in person_yolov8n-seg.pt person_yolov8m-seg.pt person_yolov8s-seg.pt; do \
+         wget -q "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" -O "$f"; \
+       done \
     && wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
         -O /comfyui/models/sams/sam_vit_b_01ec64.pth
 
