@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.10
 #
 # Models baked into the worker image so RunPod workers can spawn in any
 # datacenter without a network volume. Built on top of the studio-redesign
