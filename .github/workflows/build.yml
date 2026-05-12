@@ -1,17 +1,17 @@
-name: Build baked-models image (self-hosted)
+name: Build slim comfyui-models image
 
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Push image to registries + tag :latest (RunPod workers will roll). Default false = build + cache only."
+        description: "Push image to registries + tag :latest (RunPod workers will roll on next cold start). Default false = build only."
         type: boolean
-        default: false
+        default: true
   push:
     branches: [main]
 
 concurrency:
-  group: build-self-hosted-${{ github.ref }}
+  group: build-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -20,16 +20,13 @@ permissions:
 
 jobs:
   build:
-    # Self-hosted runner on don server (701 GB disk). GitHub-hosted runners
-    # only have 14 GB which is too small for the 34 GB Flux 2 unet layer.
-    runs-on: self-hosted
+    # Image is small now (~5-10 GB; no baked models). GitHub-hosted runners
+    # are plenty - the previous self-hosted runner was only needed for the
+    # 34 GB Flux 2 unet layer.
+    runs-on: ubuntu-latest
 
     env:
-      # Push only when explicitly requested via workflow_dispatch input.
-      # Every push image bump rolls RunPod workers, which is billed by
-      # uptime, so default to cache-only builds and gate image publish
-      # behind a manual flag.
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true }}
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' && inputs.publish == true || github.event_name == 'push' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -50,20 +47,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build (cache only)
+      - name: Build (verify only)
         if: env.PUBLISH != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
+          push: false
           provenance: false
           sbom: false
-          push: false
-          secrets: |
-            "hf_token=${{ secrets.HF_TOKEN }}"
-          # Cache-only build. No image push, no :latest update, no RunPod
-          # rollover. Just warms the registry cache so the next publish
-          # build is fast.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
 
@@ -75,30 +67,15 @@ jobs:
           file: ./Dockerfile
           provenance: false
           sbom: false
-          # Push to both registries so RunPod can pull from the faster one
-          # (Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1).
+          # Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1; keep
+          # both so RunPod can pick whichever responds faster.
           tags: |
             docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest
             docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/comfyui-models:latest
             ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}
-          secrets: |
-            "hf_token=${{ secrets.HF_TOKEN }}"
-          # zstd over gzip for the image layers:
-          # - 20-50% smaller layers (better push throughput)
-          # - Decompression ~60% faster than gzip on pull = RunPod cold
-          #   start drops ~30% (per AWS Fargate benchmark)
-          # - safetensors themselves barely compress with either algorithm;
-          #   the real win is non-tensor layers (Python deps, ComfyUI src,
-          #   base image)
-          # - force-compression=true recompresses the gzip base-image
-          #   layers to zstd so the final image is uniform
-          # - BuildKit's zstd is pure-Go klauspost (not CGO), so build
-          #   compression speed is marginal vs gzip; the win is push/pull
+          # zstd compression: smaller layers, faster decompress on pull.
           outputs: type=image,push=true,compression=zstd,force-compression=true
-          # Registry mode=max caches every intermediate stage so warm
-          # rebuilds skip already-downloaded models. Separate :buildcache
-          # ref keeps the cache manifest out of :latest.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
 
@@ -106,7 +83,7 @@ jobs:
         if: env.PUBLISH == 'true'
         run: |
           {
-            echo "### ComfyUI baked-models image (published)"
+            echo "### comfyui-models image (published)"
             echo '```'
             echo "Docker Hub: docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
             echo "ghcr.io:    ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
@@ -116,13 +93,17 @@ jobs:
             echo '```'
             echo "runpodctl template update gcgakg920o --image docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
             echo '```'
+            echo ""
+            echo "Required env on the template:"
+            echo "  R2_WORKER_URL    https://comfy-models-r2.<acct>.workers.dev"
+            echo "  R2_WORKER_TOKEN  (matches the Cloudflare Worker AUTH_TOKEN secret)"
+            echo "  PREFETCH_PARALLEL  optional, default 4"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Cache-only summary
+      - name: Verify-only summary
         if: env.PUBLISH != 'true'
         run: |
           {
-            echo "### ComfyUI baked-models cache warmed"
-            echo "Cache ref: ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache"
-            echo "No image push. To publish, run workflow_dispatch with publish=true."
+            echo "### comfyui-models build verified"
+            echo "No push. To publish, dispatch with publish=true."
           } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,22 @@
+name = "comfy-models-r2"
+main = "src/worker.ts"
+compatibility_date = "2026-05-01"
+
+# Increase CPU budget for large multipart streaming. Free plan caps at 10ms
+# CPU per request, but R2 streaming is mostly I/O wait, not CPU.
+[limits]
+cpu_ms = 50
+
+# R2 bucket binding. Bucket holds all ComfyUI models (~100 GB).
+# Create with: wrangler r2 bucket create comfy-models
+[[r2_buckets]]
+binding = "MODELS"
+bucket_name = "comfy-models"
+
+# Secret set via:
+#   wrangler secret put AUTH_TOKEN
+# Same token goes into RunPod env as R2_WORKER_TOKEN.
+
+# Observability so request logs land in dashboard.
+[observability]
+enabled = true

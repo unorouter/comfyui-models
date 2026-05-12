@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "version": 1,
+  "comment": "Maps R2 keys -> local /comfyui/models paths. Worker prefetches each on startup. Add/remove entries to change which models ship without rebuilding image.",
+  "models": [
+    {
+      "r2_key": "checkpoints/prefectPonyXL_v40.safetensors",
+      "dest": "checkpoints/prefectPonyXL_v40.safetensors",
+      "size_bytes": 6938040682
+    },
+    {
+      "r2_key": "checkpoints/lustifySDXLNSFW_endgame.safetensors",
+      "dest": "checkpoints/lustifySDXLNSFW_endgame.safetensors",
+      "size_bytes": 6938040682
+    },
+    {
+      "r2_key": "checkpoints/sd_xl_base_1.0.safetensors",
+      "dest": "checkpoints/sd_xl_base_1.0.safetensors",
+      "size_bytes": 6938078334
+    },
+    {
+      "r2_key": "unet/flux2_dev_fp8mixed.safetensors",
+      "dest": "unet/flux2_dev_fp8mixed.safetensors",
+      "size_bytes": 34000000000
+    },
+    {
+      "r2_key": "clip/mistral_3_small_flux2_fp8.safetensors",
+      "dest": "clip/mistral_3_small_flux2_fp8.safetensors",
+      "size_bytes": 24000000000
+    },
+    {
+      "r2_key": "vae/flux2-vae.safetensors",
+      "dest": "vae/flux2-vae.safetensors",
+      "size_bytes": 168000000
+    },
+    {
+      "r2_key": "loras/Sinfully_Stylish_dramitic_bold_lighting.safetensors",
+      "dest": "loras/Sinfully_Stylish_dramitic_bold_lighting.safetensors"
+    },
+    {
+      "r2_key": "loras/sinfully_stylish_PONY_0.2.safetensors",
+      "dest": "loras/sinfully_stylish_PONY_0.2.safetensors"
+    },
+    {
+      "r2_key": "loras/Expressive_H-000001.safetensors",
+      "dest": "loras/Expressive_H-000001.safetensors"
+    },
+    {
+      "r2_key": "loras/wlop-000018-pony.safetensors",
+      "dest": "loras/wlop-000018-pony.safetensors"
+    },
+    {
+      "r2_key": "loras/jinx.safetensors",
+      "dest": "loras/jinx.safetensors"
+    },
+    {
+      "r2_key": "embeddings/EasyNegative.safetensors",
+      "dest": "embeddings/EasyNegative.safetensors"
+    },
+    {
+      "r2_key": "upscale_models/RealESRGAN_x4plus.pth",
+      "dest": "upscale_models/RealESRGAN_x4plus.pth"
+    },
+    {
+      "r2_key": "upscale_models/RealESR_AnimeVideoV3.pth",
+      "dest": "upscale_models/RealESR_AnimeVideoV3.pth"
+    },
+    {
+      "r2_key": "upscale_models/4x_NMKD-Siax_200k.pth",
+      "dest": "upscale_models/4x_NMKD-Siax_200k.pth"
+    },
+    {
+      "r2_key": "upscale_models/4x-UltraSharp.pth",
+      "dest": "upscale_models/4x-UltraSharp.pth"
+    },
+    {
+      "r2_key": "controlnet/control-depth-sdxl.safetensors",
+      "dest": "controlnet/control-depth-sdxl.safetensors"
+    },
+    {
+      "r2_key": "controlnet/control-canny-sdxl.safetensors",
+      "dest": "controlnet/control-canny-sdxl.safetensors"
+    },
+    {
+      "r2_key": "controlnet/control-openpose-sdxl.safetensors",
+      "dest": "controlnet/control-openpose-sdxl.safetensors"
+    },
+    {
+      "r2_key": "ultralytics/bbox/face_yolov8s.pt",
+      "dest": "ultralytics/bbox/face_yolov8s.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/face_yolov9c.pt",
+      "dest": "ultralytics/bbox/face_yolov9c.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/face_yolov8m.pt",
+      "dest": "ultralytics/bbox/face_yolov8m.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/face_yolov8n.pt",
+      "dest": "ultralytics/bbox/face_yolov8n.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/face_yolov8n_v2.pt",
+      "dest": "ultralytics/bbox/face_yolov8n_v2.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/hand_yolov8s.pt",
+      "dest": "ultralytics/bbox/hand_yolov8s.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/hand_yolov9c.pt",
+      "dest": "ultralytics/bbox/hand_yolov9c.pt"
+    },
+    {
+      "r2_key": "ultralytics/bbox/hand_yolov8n.pt",
+      "dest": "ultralytics/bbox/hand_yolov8n.pt"
+    },
+    {
+      "r2_key": "ultralytics/segm/person_yolov8n-seg.pt",
+      "dest": "ultralytics/segm/person_yolov8n-seg.pt"
+    },
+    {
+      "r2_key": "ultralytics/segm/person_yolov8m-seg.pt",
+      "dest": "ultralytics/segm/person_yolov8m-seg.pt"
+    },
+    {
+      "r2_key": "ultralytics/segm/person_yolov8s-seg.pt",
+      "dest": "ultralytics/segm/person_yolov8s-seg.pt"
+    },
+    {
+      "r2_key": "sams/sam_vit_b_01ec64.pth",
+      "dest": "sams/sam_vit_b_01ec64.pth"
+    },
+    {
+      "r2_key": "diffusion_models/layer_xl_transparent_attn.safetensors",
+      "dest": "diffusion_models/layer_xl_transparent_attn.safetensors"
+    }
+  ]
+}
