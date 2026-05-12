@@ -43,6 +43,7 @@ jobs:
           context: .
           file: ./Dockerfile
           provenance: false
+          sbom: false
           # Push to both registries so RunPod can pull from the faster one
           # (Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1).
           tags: |
@@ -64,8 +65,27 @@ jobs:
           # - BuildKit's zstd is pure-Go klauspost (not CGO), so build
           #   compression speed is marginal vs gzip; the win is push/pull
           outputs: type=image,push=true,compression=zstd,force-compression=true
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=min,compression=zstd,force-compression=true
+          # Local-only cache. Single self-hosted runner with persistent
+          # disk, no cross-runner sharing needed. mode=max caches every
+          # intermediate stage so re-runs skip re-downloading any unchanged
+          # model. Previous mode=min on registry cache only kept the final
+          # stage = every cache miss re-pulled ~95 GB.
+          # Registry cache-from kept as warm-start seed when the local
+          # cache is empty (e.g. fresh runner disk).
+          cache-from: |
+            type=local,src=/home/don/buildkit-cache
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
+          cache-to: type=local,dest=/home/don/buildkit-cache-new,mode=max
+
+      - name: Rotate local buildkit cache
+        # docker/build-push-action writes to a fresh dir to avoid corruption
+        # on partial writes. Swap atomically once the build succeeds.
+        run: |
+          if [ -d /home/don/buildkit-cache-new ]; then
+            rm -rf /home/don/buildkit-cache-old || true
+            [ -d /home/don/buildkit-cache ] && mv /home/don/buildkit-cache /home/don/buildkit-cache-old
+            mv /home/don/buildkit-cache-new /home/don/buildkit-cache
+          fi
 
       - name: Image summary
         run: |

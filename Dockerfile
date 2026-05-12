@@ -41,24 +41,30 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ============================================================
 
 # --- 1) SDXL fine-tunes: one stage per ckpt ---
+# Per-stage HF cache id avoids cross-stage lock contention while still
+# letting re-runs of the SAME stage reuse already-fetched blobs.
 FROM dl-base AS dl-pony
-RUN mkdir -p /out/checkpoints \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-pony \
+    mkdir -p /out/checkpoints \
     && hf download Romanos575/prefectPonyXL_v4 prefectPonyXL_v40.safetensors \
         --local-dir /out/checkpoints
 
 FROM dl-base AS dl-endgame
-RUN mkdir -p /out/checkpoints \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-endgame \
+    mkdir -p /out/checkpoints \
     && hf download fandyy24/lustifySDXLNSFW_endgame lustifySDXLNSFW_endgame.safetensors \
         --local-dir /out/checkpoints
 
 FROM dl-base AS dl-sdxl-base
-RUN mkdir -p /out/checkpoints \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-sdxl-base \
+    mkdir -p /out/checkpoints \
     && hf download stabilityai/stable-diffusion-xl-base-1.0 sd_xl_base_1.0.safetensors \
         --local-dir /out/checkpoints
 
 # --- 2) Flux 2 stack: one stage per file ---
 FROM dl-base AS dl-flux2-unet
 RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
+    --mount=type=cache,target=/root/.cache/huggingface,id=hf-flux2-unet \
     mkdir -p /out/unet \
     && hf download Comfy-Org/flux2-dev split_files/diffusion_models/flux2_dev_fp8mixed.safetensors --local-dir /tmp/x \
     && mv /tmp/x/split_files/diffusion_models/flux2_dev_fp8mixed.safetensors /out/unet/ \
@@ -66,6 +72,7 @@ RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
 
 FROM dl-base AS dl-flux2-clip
 RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
+    --mount=type=cache,target=/root/.cache/huggingface,id=hf-flux2-clip \
     mkdir -p /out/clip \
     && hf download Comfy-Org/flux2-dev split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors --local-dir /tmp/y \
     && mv /tmp/y/split_files/text_encoders/mistral_3_small_flux2_fp8.safetensors /out/clip/ \
@@ -73,6 +80,7 @@ RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
 
 FROM dl-base AS dl-flux2-vae
 RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
+    --mount=type=cache,target=/root/.cache/huggingface,id=hf-flux2-vae \
     mkdir -p /out/vae \
     && hf download Comfy-Org/flux2-dev split_files/vae/flux2-vae.safetensors --local-dir /tmp/z \
     && mv /tmp/z/split_files/vae/flux2-vae.safetensors /out/vae/ \
@@ -80,66 +88,81 @@ RUN --mount=type=secret,id=hf_token,env=HF_TOKEN \
 
 # --- 3) LoRAs: one stage per file (matches LORA_SEEDS in unorouter seeds.ts) ---
 FROM dl-base AS dl-lora-1
-RUN mkdir -p /out/loras \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-lora-1 \
+    mkdir -p /out/loras \
     && hf download Naznut/Pony_LORAs Sinfully_Stylish_dramitic_bold_lighting.safetensors --local-dir /out/loras
 
 FROM dl-base AS dl-lora-2
-RUN mkdir -p /out/loras \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-lora-2 \
+    mkdir -p /out/loras \
     && hf download Naznut/Pony_LORAs sinfully_stylish_PONY_0.2.safetensors --local-dir /out/loras
 
 FROM dl-base AS dl-lora-3
-RUN mkdir -p /out/loras \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-lora-3 \
+    mkdir -p /out/loras \
     && hf download Naznut/Pony_LORAs Expressive_H-000001.safetensors --local-dir /out/loras
 
 FROM dl-base AS dl-lora-4
-RUN mkdir -p /out/loras \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-lora-4 \
+    mkdir -p /out/loras \
     && hf download SirVeggie/wlop-pony-lora wlop-000018-pony.safetensors --local-dir /out/loras
 
 FROM dl-base AS dl-lora-5
-RUN mkdir -p /out/loras \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-lora-5 \
+    mkdir -p /out/loras \
     && hf download Naznut/Pony_LORAs jinx.safetensors --local-dir /out/loras
 
 # --- 4) Embeddings ---
 FROM dl-base AS dl-embeddings
-RUN mkdir -p /out/embeddings \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-embeddings \
+    mkdir -p /out/embeddings \
     && hf download embed/EasyNegative EasyNegative.safetensors --local-dir /out/embeddings/
 
 # --- 5) ESRGAN upscalers: one stage per file ---
+# wget -c + cache mount lets restarted/partial fetches resume instead of
+# re-downloading from byte 0 on every cache miss.
 FROM dl-base AS dl-upscale-1
-RUN mkdir -p /out/upscale_models \
-    && wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth \
-        -O /out/upscale_models/RealESRGAN_x4plus.pth
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-upscale-1 \
+    mkdir -p /out/upscale_models \
+    && wget -qc -P /var/cache/dl https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth \
+    && cp /var/cache/dl/RealESRGAN_x4plus.pth /out/upscale_models/RealESRGAN_x4plus.pth
 
 FROM dl-base AS dl-upscale-2
-RUN mkdir -p /out/upscale_models \
-    && wget -q https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth \
-        -O /out/upscale_models/RealESR_AnimeVideoV3.pth
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-upscale-2 \
+    mkdir -p /out/upscale_models \
+    && wget -qc -P /var/cache/dl https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/realesr-animevideov3.pth \
+    && cp /var/cache/dl/realesr-animevideov3.pth /out/upscale_models/RealESR_AnimeVideoV3.pth
 
 FROM dl-base AS dl-upscale-3
-RUN mkdir -p /out/upscale_models \
-    && wget -q https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Siax_200k.pth \
-        -O /out/upscale_models/4x_NMKD-Siax_200k.pth
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-upscale-3 \
+    mkdir -p /out/upscale_models \
+    && wget -qc -P /var/cache/dl https://huggingface.co/uwg/upscaler/resolve/main/ESRGAN/4x_NMKD-Siax_200k.pth \
+    && cp /var/cache/dl/4x_NMKD-Siax_200k.pth /out/upscale_models/4x_NMKD-Siax_200k.pth
 
 FROM dl-base AS dl-upscale-4
-RUN mkdir -p /out/upscale_models \
-    && wget -q https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth \
-        -O /out/upscale_models/4x-UltraSharp.pth
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-upscale-4 \
+    mkdir -p /out/upscale_models \
+    && wget -qc -P /var/cache/dl https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth \
+    && cp /var/cache/dl/4x-UltraSharp.pth /out/upscale_models/4x-UltraSharp.pth
 
 # --- 6) SDXL ControlNets (xinsir): one stage per file ---
 FROM dl-base AS dl-cn-depth
-RUN mkdir -p /out/controlnet \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-cn-depth \
+    mkdir -p /out/controlnet \
     && hf download xinsir/controlnet-depth-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/a \
     && mv /tmp/a/diffusion_pytorch_model.safetensors /out/controlnet/control-depth-sdxl.safetensors \
     && rm -rf /tmp/a
 
 FROM dl-base AS dl-cn-canny
-RUN mkdir -p /out/controlnet \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-cn-canny \
+    mkdir -p /out/controlnet \
     && hf download xinsir/controlnet-canny-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/b \
     && mv /tmp/b/diffusion_pytorch_model.safetensors /out/controlnet/control-canny-sdxl.safetensors \
     && rm -rf /tmp/b
 
 FROM dl-base AS dl-cn-openpose
-RUN mkdir -p /out/controlnet \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-cn-openpose \
+    mkdir -p /out/controlnet \
     && hf download xinsir/controlnet-openpose-sdxl-1.0 diffusion_pytorch_model.safetensors --local-dir /tmp/c \
     && mv /tmp/c/diffusion_pytorch_model.safetensors /out/controlnet/control-openpose-sdxl.safetensors \
     && rm -rf /tmp/c
@@ -147,28 +170,32 @@ RUN mkdir -p /out/controlnet \
 # --- 7) ADetailer YOLO bbox/segm + SAM: one stage per file ---
 # Impact Pack scans models/ultralytics/{bbox,segm}/.
 FROM dl-base AS dl-yolo-bbox
-RUN mkdir -p /out/ultralytics/bbox \
-    && cd /out/ultralytics/bbox \
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-yolo-bbox \
+    mkdir -p /out/ultralytics/bbox /var/cache/dl \
     && for f in face_yolov8s.pt face_yolov9c.pt face_yolov8m.pt face_yolov8n.pt face_yolov8n_v2.pt \
                 hand_yolov8s.pt hand_yolov9c.pt hand_yolov8n.pt; do \
-         wget -q "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" -O "$f"; \
+         wget -qc -P /var/cache/dl "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" \
+         && cp "/var/cache/dl/$f" "/out/ultralytics/bbox/$f"; \
        done
 
 FROM dl-base AS dl-yolo-segm
-RUN mkdir -p /out/ultralytics/segm \
-    && cd /out/ultralytics/segm \
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-yolo-segm \
+    mkdir -p /out/ultralytics/segm /var/cache/dl \
     && for f in person_yolov8n-seg.pt person_yolov8m-seg.pt person_yolov8s-seg.pt; do \
-         wget -q "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" -O "$f"; \
+         wget -qc -P /var/cache/dl "https://huggingface.co/Bingsu/adetailer/resolve/main/$f" \
+         && cp "/var/cache/dl/$f" "/out/ultralytics/segm/$f"; \
        done
 
 FROM dl-base AS dl-sam
-RUN mkdir -p /out/sams \
-    && wget -q https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
-        -O /out/sams/sam_vit_b_01ec64.pth
+RUN --mount=type=cache,target=/var/cache/dl,id=dl-sam \
+    mkdir -p /out/sams \
+    && wget -qc -P /var/cache/dl https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth \
+    && cp /var/cache/dl/sam_vit_b_01ec64.pth /out/sams/sam_vit_b_01ec64.pth
 
 # --- 8) LayerDiffuse SDXL ---
 FROM dl-base AS dl-layerdiffuse
-RUN mkdir -p /out/diffusion_models \
+RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-layerdiffuse \
+    mkdir -p /out/diffusion_models \
     && hf download LayerDiffusion/layerdiffusion-v1 layer_xl_transparent_attn.safetensors \
         --local-dir /out/diffusion_models/
 
