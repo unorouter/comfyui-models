@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: "Push image to registries + tag :latest (RunPod workers will roll). Default false = build + cache only."
+        description: "Push image to registries + tag :latest / :sdxl (RunPod workers will roll). Default false = build + cache only."
         type: boolean
         default: false
   push:
@@ -23,6 +23,21 @@ jobs:
     # Self-hosted runner on don server (701 GB disk). GitHub-hosted runners
     # only have 14 GB which is too small for the 34 GB Flux 2 unet layer.
     runs-on: self-hosted
+
+    # Two variants, both from the same Dockerfile:
+    # - full: SDXL + Flux 2 stack (~90 GB, tag :latest)
+    # - sdxl: SDXL only, no Flux 2 (~40 GB, tag :sdxl)
+    # Common bake stage is shared so the 39 GB of SDXL/ControlNet/LoRA/
+    # YOLO layers are downloaded + pushed once and referenced by both tags
+    # via content-addressable layer dedup on Docker Hub.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: full
+            tag: latest
+          - variant: sdxl
+            tag: sdxl
 
     env:
       # Push only when explicitly requested via workflow_dispatch input.
@@ -56,14 +71,17 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: ${{ matrix.variant }}
           provenance: false
           sbom: false
           push: false
           secrets: |
             "hf_token=${{ secrets.HF_TOKEN }}"
-          # Cache-only build. No image push, no :latest update, no RunPod
+          # Cache-only build. No image push, no tag update, no RunPod
           # rollover. Just warms the registry cache so the next publish
-          # build is fast.
+          # build is fast. Shared buildcache ref across both variants so
+          # the common bake-common stage hits cache when the second
+          # variant builds.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
 
@@ -73,15 +91,18 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: ${{ matrix.variant }}
           provenance: false
           sbom: false
           # Push to both registries so RunPod can pull from the faster one
           # (Docker Hub ~6x faster cold pull than ghcr.io from EU-RO-1).
+          # SHA tag is variant-suffixed so both variants can coexist on
+          # the same commit.
           tags: |
-            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest
-            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/comfyui-models:latest
-            ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}
+            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ matrix.tag }}
+            docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ github.sha }}-${{ matrix.variant }}
+            ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ matrix.tag }}
+            ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ github.sha }}-${{ matrix.variant }}
           secrets: |
             "hf_token=${{ secrets.HF_TOKEN }}"
           # zstd over gzip for the image layers:
@@ -98,7 +119,7 @@ jobs:
           outputs: type=image,push=true,compression=zstd,force-compression=true
           # Registry mode=max caches every intermediate stage so warm
           # rebuilds skip already-downloaded models. Separate :buildcache
-          # ref keeps the cache manifest out of :latest.
+          # ref keeps the cache manifest out of the published tags.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
 
@@ -106,15 +127,15 @@ jobs:
         if: env.PUBLISH == 'true'
         run: |
           {
-            echo "### ComfyUI baked-models image (published)"
+            echo "### ComfyUI baked-models image (${{ matrix.variant }}) published"
             echo '```'
-            echo "Docker Hub: docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
-            echo "ghcr.io:    ghcr.io/${{ github.repository_owner }}/comfyui-models:latest"
+            echo "Docker Hub: docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ matrix.tag }}"
+            echo "ghcr.io:    ghcr.io/${{ github.repository_owner }}/comfyui-models:${{ matrix.tag }}"
             echo '```'
             echo ""
             echo "Update RunPod template:"
             echo '```'
-            echo "runpodctl template update gcgakg920o --image docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:latest"
+            echo "runpodctl template update <template-id> --image docker.io/${{ vars.DOCKERHUB_REPO }}/${{ vars.DOCKERHUB_IMG }}:${{ matrix.tag }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -122,7 +143,7 @@ jobs:
         if: env.PUBLISH != 'true'
         run: |
           {
-            echo "### ComfyUI baked-models cache warmed"
+            echo "### ComfyUI baked-models cache warmed (${{ matrix.variant }})"
             echo "Cache ref: ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache"
             echo "No image push. To publish, run workflow_dispatch with publish=true."
           } >> "$GITHUB_STEP_SUMMARY"

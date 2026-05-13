@@ -200,20 +200,18 @@ RUN --mount=type=cache,target=/root/.cache/huggingface,id=hf-layerdiffuse \
         --local-dir /out/diffusion_models/
 
 # ============================================================
-# Final stage - merges all download stages with COPY --link.
-# Multiple COPY into same dest dir works fine with --link.
+# Shared bake stage - everything EXCEPT Flux 2 stack.
+# Both final variants (sdxl-only and full) inherit from this so the
+# common 39 GB of layers (SDXL ckpts, LoRAs, embeddings, upscalers,
+# controlnets, YOLO, SAM, LayerDiffuse) are pushed and cached once
+# instead of duplicated per tag.
 # ============================================================
-FROM 0don/worker-comfyui:studio-redesign-base
+FROM 0don/worker-comfyui:studio-redesign-base AS bake-common
 
 # Checkpoints (3 separate stages each writing to /out/checkpoints)
 COPY --link --from=dl-pony         /out/checkpoints       /comfyui/models/checkpoints
 COPY --link --from=dl-endgame      /out/checkpoints       /comfyui/models/checkpoints
 COPY --link --from=dl-sdxl-base    /out/checkpoints       /comfyui/models/checkpoints
-
-# Flux 2 (3 stages, 3 dirs)
-COPY --link --from=dl-flux2-unet   /out/unet              /comfyui/models/unet
-COPY --link --from=dl-flux2-clip   /out/clip              /comfyui/models/clip
-COPY --link --from=dl-flux2-vae    /out/vae               /comfyui/models/vae
 
 # LoRAs (5 separate stages)
 COPY --link --from=dl-lora-1       /out/loras             /comfyui/models/loras
@@ -244,8 +242,35 @@ COPY --link --from=dl-sam          /out/sams              /comfyui/models/sams
 # LayerDiffuse
 COPY --link --from=dl-layerdiffuse /out/diffusion_models  /comfyui/models/diffusion_models
 
+# ============================================================
+# SDXL-only variant target (~40 GB).
+# Built when CI sets `target: sdxl`. RunPod endpoints that only run
+# Pony/Endgame/SDXL workflows pull this for 3-5 min cold pull vs the
+# full 90 GB image's 5-15 min.
+# ============================================================
+FROM bake-common AS sdxl
+
 # Verify everything landed. List with counts so log shows file count per dir.
-RUN echo "=== Staged models ===" \
+RUN echo "=== Staged models (sdxl variant) ===" \
+    && for d in checkpoints loras embeddings upscale_models controlnet ultralytics/bbox \
+                ultralytics/segm sams diffusion_models; do \
+         echo "--- /comfyui/models/$d/ ---"; \
+         ls -lh "/comfyui/models/$d/" 2>&1 | tail -n +2; \
+       done
+
+# ============================================================
+# Full variant target (~90 GB) - includes Flux 2 stack on top of
+# bake-common. Default target so `:latest` remains the full image.
+# ============================================================
+FROM bake-common AS full
+
+# Flux 2 (3 stages, 3 dirs)
+COPY --link --from=dl-flux2-unet   /out/unet              /comfyui/models/unet
+COPY --link --from=dl-flux2-clip   /out/clip              /comfyui/models/clip
+COPY --link --from=dl-flux2-vae    /out/vae               /comfyui/models/vae
+
+# Verify everything landed. List with counts so log shows file count per dir.
+RUN echo "=== Staged models (full variant) ===" \
     && for d in checkpoints loras embeddings upscale_models controlnet ultralytics/bbox \
                 ultralytics/segm sams diffusion_models unet clip vae; do \
          echo "--- /comfyui/models/$d/ ---"; \
