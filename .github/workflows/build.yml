@@ -32,6 +32,13 @@ jobs:
     # via content-addressable layer dedup on Docker Hub.
     strategy:
       fail-fast: false
+      # Serial execution, full first. Single self-hosted runner can only run
+      # one matrix job at a time anyway, but max-parallel: 1 makes the order
+      # deterministic instead of relying on GH's scheduler picking jobs
+      # alphabetically. `full` is listed first so :latest publishes before
+      # :sdxl, which matters because most consumers (RunPod template) pin
+      # to :latest and we want that updated first.
+      max-parallel: 1
       matrix:
         include:
           - variant: full
