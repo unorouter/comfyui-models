@@ -49,7 +49,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Constrain buildkitd memory. Previous OOM (May 12 23:42) was caused
+      # by buildkitd holding 27 GB RSS on a 31 GB-RAM host. Cap parallelism
+      # so peak RSS stays under ~12 GB and the runner + dockerd + other
+      # services keep their headroom.
+      #
+      # max-parallelism = 2 limits concurrent download stages from our 22
+      # to 2 at a time. Total wall time impact ~10-30% slower since the
+      # 1 Gbps NIC is the bottleneck not parallelism. hf-xet still does
+      # range_gets within each stage so per-file bandwidth is saturated.
       - uses: docker/setup-buildx-action@v3
+        with:
+          buildkitd-config-inline: |
+            [worker.oci]
+              max-parallelism = 2
+              gc = true
+              gckeepbytes = 21474836480
 
       - name: Log in to Docker Hub
         if: env.PUBLISH == 'true'
@@ -83,7 +98,7 @@ jobs:
           # the common bake-common stage hits cache when the second
           # variant builds.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=min,compression=zstd
 
       - name: Build & push (Docker Hub + ghcr.io)
         if: env.PUBLISH == 'true'
@@ -121,7 +136,7 @@ jobs:
           # rebuilds skip already-downloaded models. Separate :buildcache
           # ref keeps the cache manifest out of the published tags.
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=max,compression=zstd
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/comfyui-models:buildcache,mode=min,compression=zstd
 
       - name: Image summary
         if: env.PUBLISH == 'true'
